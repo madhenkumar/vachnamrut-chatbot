@@ -21,7 +21,7 @@ export function Chat() {
   const isGeneratingResponse = ["streaming", "submitted"].includes(status);
 
   return (
-    <div
+    <div id="chat"
       className={cn(
         "px-4 md:px-0 pb-4 pt-8 flex flex-col h-dvh items-center w-full max-w-3xl",
         {

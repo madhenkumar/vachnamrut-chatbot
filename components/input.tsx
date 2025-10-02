@@ -20,7 +20,7 @@ export function Input({
       className="mb-12 w-full bg-transparent outline-none resize-none min-h-12 placeholder:text-zinc-400"
       placeholder="Ask about the Vachnamrut..."
       value={input}
-      autoFocus
+      // autoFocus
       onChange={(event) => {
         setInput(event.currentTarget.value);
       }}
