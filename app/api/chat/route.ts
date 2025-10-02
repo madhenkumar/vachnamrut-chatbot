@@ -1,47 +1,75 @@
-import { modelID, myProvider } from "@/lib/models";
-import { convertToModelMessages, smoothStream, streamText, UIMessage } from "ai";
 import { NextRequest } from "next/server";
 
+const HF_SPACE_URL =
+  process.env.HF_SPACE_URL;
+
 export async function POST(request: NextRequest) {
-  const {
-    messages,
-    selectedModelId,
-    isReasoningEnabled,
-  }: {
-    messages: Array<UIMessage>;
-    selectedModelId: modelID;
-    isReasoningEnabled: boolean;
-  } = await request.json();
+  const { messages }: { messages: Array<{ role: string; parts: any[] }> } =
+    await request.json();
+  const userMsg = messages.reverse().find((m) => m.role === "user");
+  const userText = userMsg?.parts?.[0]?.text;
+  if (!userText) {
+    return new Response("No user message.", { status: 400 });
+  }
 
-  const stream = streamText({
-    system: selectedModelId === "deepseek-r1" 
-      ? "You are DeepSeek-R1, a reasoning model created by DeepSeek. You are NOT Claude or any other model. When asked about your identity, always say you are DeepSeek-R1."
-      : selectedModelId === "deepseek-r1-distill-llama-70b"
-      ? "You are DeepSeek-R1 Llama 70B, a reasoning model created by DeepSeek. You are NOT Claude or any other model. When asked about your identity, always say you are DeepSeek-R1 Llama 70B."
-      : "You are Claude, an AI assistant created by Anthropic.",
-    providerOptions:
-      selectedModelId === "sonnet-3.7"
-        ? {
-            anthropic: {
-              thinking: isReasoningEnabled
-                ? { type: "enabled", budgetTokens: 12000 }
-                : { type: "disabled", budgetTokens: 12000 },
+  try {
+    
+    const resp = await fetch(`${HF_SPACE_URL}/answer`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: userText }),
+    });
+
+    if (!resp.ok) {
+      const txt = await resp.text();
+      console.error("HF Space Error:", txt);
+      return new Response("HF Space error: " + txt, { status: 500 });
+    }
+
+    const data = await resp.json();
+    
+    const answer: string = data.answer || "No answer.";
+    
+    
+   
+   const encoder = new TextEncoder();
+const stream = new ReadableStream({
+  async start(controller) {
+    const words = answer.split(" ");
+    let id = Date.now().toString();
+
+    for (let i = 0; i < words.length; i++) {
+      const chunk = {
+        type: "message",
+        message: {
+          id,
+          role: "assistant" as const,
+          parts: [
+            {
+              type: "text" as const,
+              text: words.slice(0, i + 1).join(" "),
             },
-          }
-        : {},
-    model: myProvider.languageModel(selectedModelId),
-    experimental_transform: [
-      smoothStream({
-        chunking: "word",
-      }),
-    ],
-    messages: convertToModelMessages(messages),
-  });
+          ],
+        },
+      };
 
-  return stream.toUIMessageStreamResponse({
-    sendReasoning: true,
-    onError: () => {
-      return `An error occurred, please try again!`;
-    },
-  });
+      controller.enqueue(encoder.encode(JSON.stringify(chunk) + "\n"));
+      await new Promise((r) => setTimeout(r, 40));
+    }
+
+    controller.close();
+  },
+});
+
+
+
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "application/x-ndjson",
+      },
+    });
+  } catch (err: any) {
+    console.error("Proxy error:", err);
+    return new Response("Server error: " + err.message, { status: 500 });
+  }
 }
