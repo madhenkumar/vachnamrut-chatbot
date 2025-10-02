@@ -2,7 +2,7 @@
 
 import cn from "classnames";
 import { toast } from "sonner";
-import { useChat} from "@ai-sdk/react";
+import { useChat } from "@ai-sdk/react";
 import { useState } from "react";
 import { Messages } from "./messages";
 import { ArrowUpIcon, StopIcon } from "./icons";
@@ -11,15 +11,12 @@ import { Input } from "./input";
 export function Chat() {
   const [input, setInput] = useState<string>("");
 
-
   const { messages, sendMessage, status, stop } = useChat({
     id: "primary",
     onError: () => {
       toast.error("An error occurred, please try again!");
     },
   });
-  
-  
 
   const isGeneratingResponse = ["streaming", "submitted"].includes(status);
 
@@ -57,7 +54,7 @@ export function Chat() {
               sendMessage({
                 role: "user",
                 parts: [{ type: "text", text: input }],
-              });              
+              });
               setInput("");
             }}
           />
@@ -80,7 +77,7 @@ export function Chat() {
                     role: "user",
                     parts: [{ type: "text", text: input }],
                   });
-                                  }
+                }
                 setInput("");
               }}
             >

@@ -29,7 +29,6 @@ export function Messages({
       messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
     }
   }, [messagesLength]);
-  console.log("Hi bitches");
   console.log("All messages:", messages);
 
   return (

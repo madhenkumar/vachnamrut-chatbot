@@ -1,75 +1,121 @@
 import { NextRequest } from "next/server";
+import {
+  createUIMessageStream,
+  createUIMessageStreamResponse,
+  UIMessage,
+  convertToModelMessages,
+} from "ai";
 
-const HF_SPACE_URL =
-  process.env.HF_SPACE_URL;
+export const maxDuration = 30;
 
 export async function POST(request: NextRequest) {
-  const { messages }: { messages: Array<{ role: string; parts: any[] }> } =
-    await request.json();
-  const userMsg = messages.reverse().find((m) => m.role === "user");
-  const userText = userMsg?.parts?.[0]?.text;
-  if (!userText) {
-    return new Response("No user message.", { status: 400 });
-  }
-
   try {
-    
-    const resp = await fetch(`${HF_SPACE_URL}/answer`, {
+    const {
+      messages,
+      selectedModelId,
+      isReasoningEnabled,
+    }: {
+      messages: Array<UIMessage>;
+      selectedModelId?: string;
+      isReasoningEnabled?: boolean;
+    } = await request.json();
+
+    const lastUser = [...(messages || [])]
+      .reverse()
+      .find((m) => m.role === "user");
+    const query =
+      lastUser?.parts
+        ?.filter((p) => p.type === "text")
+        .map((p) => ("text" in p ? p.text : ""))
+        .join("") ?? "";
+
+    const spaceRes = await fetch(process.env.HF_SPACE_URL as string, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query: userText }),
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ query }),
     });
 
-    if (!resp.ok) {
-      const txt = await resp.text();
-      console.error("HF Space Error:", txt);
-      return new Response("HF Space error: " + txt, { status: 500 });
-    }
-
-    const data = await resp.json();
-    
-    const answer: string = data.answer || "No answer.";
-    
-    
-   
-   const encoder = new TextEncoder();
-const stream = new ReadableStream({
-  async start(controller) {
-    const words = answer.split(" ");
-    let id = Date.now().toString();
-
-    for (let i = 0; i < words.length; i++) {
-      const chunk = {
-        type: "message",
-        message: {
-          id,
-          role: "assistant" as const,
-          parts: [
-            {
-              type: "text" as const,
-              text: words.slice(0, i + 1).join(" "),
+    if (!spaceRes.ok) {
+      const stream = createUIMessageStream({
+        execute: async ({ writer }) => {
+          writer.write({
+            type: "data-notification",
+            data: {
+              message: `Space error: ${spaceRes.status} ${spaceRes.statusText}`,
+              level: "error",
             },
-          ],
+            transient: true,
+          });
+          writer.write({ type: "text-start", id: "answer" });
+          writer.write({
+            type: "text-delta",
+            id: "answer",
+            delta: "An error occurred, please try again!",
+          });
+          writer.write({ type: "text-end", id: "answer" });
         },
-      };
-
-      controller.enqueue(encoder.encode(JSON.stringify(chunk) + "\n"));
-      await new Promise((r) => setTimeout(r, 40));
+      });
+      return createUIMessageStreamResponse({ stream });
     }
 
-    controller.close();
-  },
-});
+    const data = (await spaceRes.json()) as {
+      query?: string;
+      answer?: string;
+      selected?: unknown;
+      expanded?: unknown;
+    };
 
+    const answer = (data?.answer ?? "").toString();
+    const selected = data?.selected;
+    const expanded = data?.expanded;
 
+    const stream = createUIMessageStream({
+      execute: async ({ writer }) => {
+        if (selected !== undefined) {
+          writer.write({
+            type: "data-selected",
+            data: selected,
+          });
+        }
+        if (expanded !== undefined) {
+          writer.write({
+            type: "data-expanded",
+            data: expanded,
+          });
+        }
 
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "application/x-ndjson",
+        writer.write({ type: "text-start", id: "answer" });
+
+        const encoder = new TextEncoder();
+
+        const chunks = answer.split(/(\s+)/).filter(Boolean);
+        for (const piece of chunks) {
+          writer.write({ type: "text-delta", id: "answer", delta: piece });
+        }
+
+        writer.write({ type: "text-end", id: "answer" });
+      },
+
+      onError: (err) => `An error occurred, please try again!`,
+    });
+
+    return createUIMessageStreamResponse({
+      stream,
+    });
+  } catch (error) {
+    const stream = createUIMessageStream({
+      execute: async ({ writer }) => {
+        writer.write({ type: "text-start", id: "answer" });
+        writer.write({
+          type: "text-delta",
+          id: "answer",
+          delta: "An error occurred, please try again!",
+        });
+        writer.write({ type: "text-end", id: "answer" });
       },
     });
-  } catch (err: any) {
-    console.error("Proxy error:", err);
-    return new Response("Server error: " + err.message, { status: 500 });
+    return createUIMessageStreamResponse({ stream });
   }
 }
